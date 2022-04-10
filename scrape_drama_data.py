@@ -64,6 +64,7 @@ def get_all_page_urls() -> list:
         page = requests.get(page_url)
         soup = BeautifulSoup(page.content, "html.parser")
         try:
+            # get last button's href which contains the last page num
             page_nums = soup.findAll('li', attrs = {'class':'page-item last'})[0].find("a").get("href")
             page_nums = list(range(1, (int(page_nums.split("page=")[-1]))+1))
         except:
@@ -112,6 +113,7 @@ def get_drama_info(page_arg : object = None) -> pd.DataFrame:
     else:
         page_url = page_arg
     drama_urls = {'title':[], 'show_type':[], 'url':[]}
+    drama_urls_all = pd.DataFrame({'title':[], 'show_type':[], 'url':[]})
     page = requests.get(page_url)
     soup = BeautifulSoup(page.content, "html.parser")
     cell_content = soup.findAll('div', attrs={'class':"col-xs-9 row-cell content"})
@@ -124,24 +126,25 @@ def get_drama_info(page_arg : object = None) -> pd.DataFrame:
                 (cell.find('h6', attrs = {'class':'text-primary title'}).text)))
             continue
         # only add dramas to our list
-        if 'Drama' in show_type:
-            title = cell.find('h6', attrs = {'class':'text-primary title'})
+        title = cell.find('h6', attrs = {'class':'text-primary title'})
+        try:
             drama_urls['title'] = title.text
-            drama_urls['show_type'] = show_type
-            
-            # verify url
-            url = "{}{}".format(MAIN_URL, title.find("a").get("href"))
-            if not verify_url(url):
-                drama_urls['url'] = "needs_cleaning:{}".format(url)
-            else:
-                drama_urls['url'] = url
-                drama_urls.update(get_drama_metadata(url))
+        except:
+            drama_urls['title'] = np.nan
+        drama_urls['show_type'] = show_type
+        
+        # verify url
+        url = "{}{}".format(MAIN_URL, title.find("a").get("href"))
+        if not verify_url(url):
+            drama_urls['url'] = "needs_cleaning:{}".format(url)
         else:
-            continue
+            drama_urls['url'] = url
+            drama_urls.update(get_drama_metadata(url))
+        drama_urls_all = pd.concat([drama_urls_all, pd.DataFrame(drama_urls)])
     logging.info("Got drama url!")
     logging.info(page_arg)
     page.close()
-    return(pd.DataFrame(drama_urls))
+    return(drama_urls_all)
 
 
 def get_drama_metadata(url : str) -> dict:
@@ -158,17 +161,26 @@ def get_drama_metadata(url : str) -> dict:
     soup = BeautifulSoup(drama_page.content, "html.parser")
     page_det = soup.find("div", attrs={"id":"show-detailsxx"})
     # get ratings
-    rating = soup.find("div", attrs = {'class':"col-film-rating"}).text
+    try:
+        rating = soup.find("div", attrs = {'class':"col-film-rating"}).text
+    except:
+        rating = np.nan
     # get number of watchers
     try:
         watchers = page_det.findAll("div", attrs = {"class":"hfs"})[1].find("b").text
     except:
         watchers = np.nan
     # get synopsis
-    synopsis = soup.find("div", attrs = {"class":"show-synopsis"}).find("span").text
+    try:
+        synopsis = soup.find("div", attrs = {"class":"show-synopsis"}).find("span").text
+    except:
+        synopsis = ""
     # get tags
-    tags = soup.find("li", attrs = {"class":"list-item p-a-0 show-tags"}).findAll("a")
-    tags = [tag.text for tag in tags]
+    try:
+        tags = soup.find("li", attrs = {"class":"list-item p-a-0 show-tags"}).findAll("a")
+        tags = [tag.text for tag in tags]
+    except:
+        tags = []
     # get genres
     try:
         gens = soup.find("li", attrs = {"class":"list-item p-a-0 show-genres"}).findAll("a")
@@ -176,11 +188,23 @@ def get_drama_metadata(url : str) -> dict:
     except:
         gens = []
     # get num of raters, ranking and popularity
-    stat_box = soup.findAll("div", attrs = {"class":"box clear hidden-sm-down"})[1]
-    stat_list =  stat_box.findAll("li", attrs = {"class":"list-item p-a-0"})
-    raters = stat_list[0].find("span", attrs = {"class":"hft"}).text
-    rank = stat_list[1].text
-    pop = stat_list[2].text
+    try:
+        stat_box = soup.findAll("div", attrs = {"class":"box clear hidden-sm-down"})[1]
+        stat_list =  stat_box.findAll("li", attrs = {"class":"list-item p-a-0"})
+    except:
+        stat_box = None
+    try:
+        raters = stat_list[0].find("span", attrs = {"class":"hft"}).text
+    except:
+        raters = np.nan
+    try:
+        rank = stat_list[1].text
+    except:
+        rank = np.nan
+    try:
+        pop = stat_list[2].text
+    except:
+        pop = np.nan
     
     drama_metadata= {'rating':[rating], 'watchers':[watchers], 'synopsis':[synopsis],
                      'tags':[tags],'genres':[gens], 'raters':[raters],
@@ -213,16 +237,15 @@ def scrape_in_parallel() -> pd.DataFrame:
     """
     #args = get_page_nums()
     args = get_all_page_urls()
-    with multiprocessing.Pool(processes=multiprocessing.cpu_count()-1) as pool:
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()-3) as pool:
         results = pool.map(get_drama_info, args)
     drama_scrapped = pd.concat(results)
     return(drama_scrapped)
 
 
 if __name__ == '__main__':
-    is_scrape_parallel = True #sys.argv[0]
-    #save_path = sys.argv[1]
-    save_path = "/Users/rexxx"
+    is_scrape_parallel = sys.argv[0]
+    save_path = sys.argv[1]
     drama_scrapped = scrape_in_parallel() if is_scrape_parallel else scrape_serially()
     drama_scrapped.to_csv("{}/MDL_scrapped_data.csv".format(save_path))
     logging.info("Scrapped data saved to {}".format(
