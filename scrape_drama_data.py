@@ -1,4 +1,4 @@
-""" Name: scrape_drama_data.py
+''' Name: scrape_drama_data.py
     Description: Scrape drama data and metadata from mydramalist.com
         for further data processing, text cleaning and later 
         analysis and machine learning
@@ -11,7 +11,7 @@
     Example:
                 python scrape_drama_data.py True /Users/some_user/Documents/
     Contributers: rxu17
-"""
+'''
 import sys
 import requests
 import pandas as pd
@@ -44,6 +44,43 @@ def verify_url(url : str) -> bool:
         return(False)
     
     
+def get_all_page_urls() -> list:
+    """Get list of all pages to scrape through
+
+    Returns:
+        list: integers of all page numbers
+    """
+    # here type is 68 which is dramas ONLY
+    page_temp = "{}search?adv=titles&ty=68".format(MAIN_URL)
+    # cutoff for ratings is at 5.0 to save space
+    all_pos_ratings = list(np.round(np.arange(5, 10.1, 0.1),1))
+    page_temps = [
+        "{}&rt={},{}".format(page_temp, rating, rating) 
+        for rating in all_pos_ratings
+        ]
+    
+    all_page_urls = []
+    for page_url in page_temps:
+        page = requests.get(page_url)
+        soup = BeautifulSoup(page.content, "html.parser")
+        try:
+            page_nums = soup.findAll('li', attrs = {'class':'page-item last'})[0].find("a").get("href")
+            page_nums = list(range(1, (int(page_nums.split("page=")[-1]))+1))
+        except:
+            try:
+                # if max pages button doesn't exist, try 2nd to last button
+                max_pages = soup.find("ul", attrs={"class": "pagination"}).findAll("a", attrs={"class": "page-link"})
+                max_pages = int(max_pages[len(max_pages)-2].text)
+                page_nums = list(range(1, max_pages+1))
+            except:
+                # assume if we can't find pages to navigate, it only has one page
+                page_nums = [1]
+        page.close()
+        all_page_urls += ["{}&page={}".format(page_url, pg) for pg in page_nums]
+        logging.info("Got page numbers!")
+    return(all_page_urls)
+
+
 def get_page_nums() -> list:
     """Get list of all pages to scrape through
 
@@ -56,20 +93,24 @@ def get_page_nums() -> list:
     page_nums = list(range(1, int("".join([i for i in page_nums if i.isdigit()]))+1))
     logging.info("Got page numbers!")
     page.close()
-    return(list(set(page_nums)))
+    return(list(range(1,501)))
+    #return(list(set(page_nums)))
 
 
-def get_drama_info(page_num : int) -> pd.DataFrame:
+def get_drama_info(page_arg : object = None) -> pd.DataFrame:
     """Looks at list of all shows, movies, actors, pages, scrapes all available info
        and ONLY proceeds to scrape metadata IF the object is a DRAMA
 
     Args:
-        page_num (int): page number to scrape info from
+        page_arg (object): page number to scrape info from
 
     Returns:
         pd.DataFrame: table for page of all dramas
     """
-    page_url = "{}/shows/?page={}".format(MAIN_URL, page_num)
+    if isinstance(page_arg, int):
+        page_url = "{}/shows/?page={}".format(MAIN_URL, page_arg)
+    else:
+        page_url = page_arg
     drama_urls = {'title':[], 'show_type':[], 'url':[]}
     page = requests.get(page_url)
     soup = BeautifulSoup(page.content, "html.parser")
@@ -98,7 +139,7 @@ def get_drama_info(page_num : int) -> pd.DataFrame:
         else:
             continue
     logging.info("Got drama url!")
-    logging.info(page_num)
+    logging.info(page_arg)
     page.close()
     return(pd.DataFrame(drama_urls))
 
@@ -155,10 +196,11 @@ def scrape_serially() -> pd.DataFrame:
     Returns:
         pd.DataFrame: table of all scrapped urls and metadata
     """
-    page_nums = get_page_nums()
+    #page_nums = get_page_nums()
+    page_urls = get_all_page_urls()
     drama_scrapped = pd.DataFrame({'title':[], 'show_type':[], 'url':[]})
-    for page in page_nums:
-        drama_scrapped = pd.concat([drama_scrapped, get_drama_info(page_num = page)])
+    for page in page_urls:
+        drama_scrapped = pd.concat([drama_scrapped, get_drama_info(page_arg = page)])
     return(drama_scrapped)
     
     
@@ -169,16 +211,18 @@ def scrape_in_parallel() -> pd.DataFrame:
     Returns:
         pd.DataFrame: table of all scrapped urls and metadata
     """
-    with multiprocessing.Pool(processes=5) as pool:
-        args = get_page_nums()
+    #args = get_page_nums()
+    args = get_all_page_urls()
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()-1) as pool:
         results = pool.map(get_drama_info, args)
     drama_scrapped = pd.concat(results)
     return(drama_scrapped)
 
 
 if __name__ == '__main__':
-    is_scrape_parallel = eval(str(sys.argv[0]))
-    save_path = sys.argv[1]
+    is_scrape_parallel = True #sys.argv[0]
+    #save_path = sys.argv[1]
+    save_path = "/Users/rexxx"
     drama_scrapped = scrape_in_parallel() if is_scrape_parallel else scrape_serially()
     drama_scrapped.to_csv("{}/MDL_scrapped_data.csv".format(save_path))
     logging.info("Scrapped data saved to {}".format(
