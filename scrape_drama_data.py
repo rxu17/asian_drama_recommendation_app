@@ -206,9 +206,18 @@ def get_drama_metadata(url : str) -> dict:
     except:
         pop = np.nan
     
+    # get main actors
+    try:
+        actors = soup.find(
+            "ul", attrs={"class":"list no-border p-b credits"}).findAll(
+                "b", attrs = {"itempropx":"name"})
+        actors = [act.text for act in actors]
+    except:
+        actors = []
+    
     drama_metadata= {'rating':[rating], 'watchers':[watchers], 'synopsis':[synopsis],
                      'tags':[tags],'genres':[gens], 'raters':[raters],
-                     'rank':[rank], 'popularity':[pop]}
+                     'rank':[rank], 'popularity':[pop], "actors":[actors]}
     drama_page.close()
     # TODO: scrape reviews
     return(drama_metadata)
